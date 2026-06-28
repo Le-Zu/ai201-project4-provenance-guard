@@ -11,31 +11,145 @@ This document details the system design, classification logic, user experience, 
 graph TD
     %% Submission Flow
     subgraph Submission Flow (POST /submit)
-        A[POST /submit] -->|Raw Text & Creator ID| B[Multi-Signal Detection Pipeline]
-        B -->|Signal 1: LLM| C[Signal Aggregator]
-        B -->|Signal 2: Stylometrics| C
-        C -->|Combined Logic| D[Confidence Scoring]
-        D -->|Calibrated Score| E[Transparency Label Generator]
-        E -->|Label & Verdict| F[Structured Audit Log]
-        F -->|Record Saved| G[JSON Response]
+        A[POST /submit] -->|1. Raw Text & Creator ID| B[Multi-Signal Detection Pipeline]
+        B -->|2a. Raw Text| C[Signal 1: LLM Groq Classifier]
+        B -->|2b. Raw Text| D[Signal 2: Stylometrics Analyzer]
+        C -->|3a. LLM Score 0-1| E[Confidence Aggregator]
+        D -->|3b. Heuristic Score 0-1| E
+        E -->|4. Ensemble Confidence Score 0-1| F[Transparency Label Generator]
+        F -->|5. Label & Verdict Text| G[Structured Audit Log]
+        G -->|6. JSON Response: Verdict, Label, Content ID| H[Client Response]
     end
 
     %% Appeal Flow
     subgraph Appeal Flow (POST /appeal)
-        H[POST /appeal] -->|Content ID & Creator Reasoning| I[Appeal Handler]
-        I -->|Update Status to 'under review'| J[Database / Storage]
-        I -->|Log Appeal Event| F
-        I -->|Success Confirmation| K[JSON Response]
+        I[POST /appeal] -->|1. Content ID & Reasoning| J[Appeal Handler]
+        J -->|2. Query & Check Existence| K[(Log Storage / Database)]
+        J -->|3. Update Status to 'under review' & Log Reasoning| K
+        J -->|4. JSON Response: Status Confirmation| L[Client Response]
     end
 ```
 
 ### Architecture Narrative
-1. **Submission Flow**: When a creator submits text via `POST /submit`, the content is passed to the Multi-Signal Detection Pipeline. This pipeline evaluates the text using two independent signals (LLM-based classification via Groq and structural stylometric heuristics), compiles their outputs into a single confidence score, maps it to a human-readable transparency label, writes a structured entry to the audit log, and returns the result to the client.
-2. **Appeal Flow**: If a creator contests a classification, they submit a `POST /appeal` request with the `content_id` and their reasoning. The system locates the original record in storage, updates its status to `"under review"`, appends the appeal details to the audit log, and returns a confirmation response.
+1. **Submission Flow**: The client calls `POST /submit` with content and user metadata. The `Multi-Signal Detection Pipeline` runs semantic analysis via Groq and structural/statistical analysis via Python stylometrics concurrently. The `Confidence Aggregator` synthesizes these outputs using a weighted average. The `Transparency Label Generator` maps this ensemble confidence score to a pre-defined UX label. Finally, the system logs the full transaction (including individual signal scores) in the structured audit log and returns the JSON payload to the client.
+2. **Appeal Flow**: If a classification is contested, `POST /appeal` is hit. The `Appeal Handler` retrieves the record by `content_id`, updates its status to `"under review"`, appends the reason to the audit log, and outputs a confirmation JSON response.
+
+### API Surface Contract
+
+#### 1. Content Submission Endpoint
+* **Path**: `/submit`
+* **Method**: `POST`
+* **Content-Type**: `application/json`
+* **Request Body**:
+  ```json
+  {
+    "text": "The sun dipped below the horizon, painting the sky...",
+    "creator_id": "test-user-1"
+  }
+  ```
+* **Response Body (200 OK)**:
+  ```json
+  {
+    "content_id": "3f7a2b1e-7b70-4d56-b072-46823c34ff0b",
+    "creator_id": "test-user-1",
+    "attribution": "likely_human",
+    "confidence": 0.18,
+    "label": "Verified Human: This content exhibits natural stylistic variations...",
+    "status": "classified"
+  }
+  ```
+* **Error Response (400 Bad Request)**:
+  ```json
+  {
+    "error": "Missing required fields: 'text' and 'creator_id' must be provided."
+  }
+  ```
+
+#### 2. Appeals Endpoint
+* **Path**: `/appeal`
+* **Method**: `POST`
+* **Content-Type**: `application/json`
+* **Request Body**:
+  ```json
+  {
+    "content_id": "3f7a2b1e-7b70-4d56-b072-46823c34ff0b",
+    "creator_id_or_reasoning": "I wrote this myself from personal experience."
+  }
+  ```
+  *(Note: The PDF spec requires `content_id` and `creator_reasoning`)*
+  ```json
+  {
+    "content_id": "3f7a2b1e-7b70-4d56-b072-46823c34ff0b",
+    "creator_reasoning": "I wrote this myself from personal experience."
+  }
+  ```
+* **Response Body (200 OK)**:
+  ```json
+  {
+    "message": "Appeal successfully received and logged.",
+    "content_id": "3f7a2b1e-7b70-4d56-b072-46823c34ff0b",
+    "status": "under_review"
+  }
+  ```
+* **Error Response (404 Not Found)**:
+  ```json
+  {
+    "error": "Content submission with ID 3f7a2b1e-7b70-4d56-b072-46823c34ff0b not found."
+  }
+  ```
+
+#### 3. Audit Log Retrieval Endpoint (for verification/grading)
+* **Path**: `/log`
+* **Method**: `GET`
+* **Response Body (200 OK)**:
+  ```json
+  {
+    "entries": [
+      {
+        "content_id": "3f7a2b1e-7b70-4d56-b072-46823c34ff0b",
+        "creator_id": "test-user-1",
+        "timestamp": "2026-06-28T14:32:10.123Z",
+        "attribution": "likely_human",
+        "confidence": 0.18,
+        "llm_score": 0.22,
+        "stylometric_score": 0.10,
+        "status": "classified",
+        "appeal_reasoning": null
+      }
+    ]
+  }
+  ```
 
 ---
 
-## 2. Detection Signals
+## 2. False Positive Scenario Trace
+
+To ensure production safety and user trust, we trace a scenario where a human writer's work is incorrectly flagged as AI-generated:
+
+1. **Submission**: A human writer submits a formal academic-style essay or a highly formulaic blog post (e.g., standard tutorial) via `POST /submit`.
+2. **Analysis & Pipeline Output**:
+   - The Groq LLM model registers highly predictable phrasing and gives an LLM score of `0.78` (likely AI).
+   - The stylometrics heuristic registers uniform sentence length and simple, common vocabulary, yielding a score of `0.65` (moderately likely AI).
+   - The ensemble calculates $C = 0.70 \times 0.78 + 0.30 \times 0.65 = 0.741$.
+3. **Verdict & Label**: Since $0.741 > 0.70$, the system issues the label `"AI-Generated"`.
+4. **Creator Reaction & Appeal**: The writer sees the incorrect label, which hurts their professional reputation. They click "Appeal" (contesting the decision).
+5. **Appeals Request**: The client issues:
+   ```json
+   {
+     "content_id": "3f7a2b1e-7b70-4d56-b072-46823c34ff0b",
+     "creator_reasoning": "I spent three days drafting this and used standard technical definitions which explain the formulaic structure."
+   }
+   ```
+6. **System State Update**:
+   - The status is updated to `"under review"`.
+   - The creator reasoning is recorded.
+   - Any external platform integrations (or a human moderation dashboard) are notified of the pending appeal.
+   - The display label for the text is immediately replaced with the `"Unverified / Under Review"` label to protect the creator from penalty while manual inspection is pending.
+
+---
+
+
+## 3. Detection Signals
 
 * **Signal 1: LLM-Based Classification (Groq)**
   * **What it measures**: Semantic coherence, stylistic patterns, clichés, and overall flow characteristic of generative LLMs.
@@ -56,7 +170,7 @@ graph TD
 
 ---
 
-## 3. Uncertainty Representation
+## 4. Uncertainty Representation
 
 * **Mapping Raw Outputs to Calibrated Score**:
   * A combined score $C$ near `0.5` represents high uncertainty.
@@ -70,7 +184,7 @@ graph TD
 
 ---
 
-## 4. Transparency Label Design
+## 5. Transparency Label Design
 
 Verbatim text for the three label variants:
 
@@ -82,7 +196,7 @@ Verbatim text for the three label variants:
 
 ---
 
-## 5. Appeals Workflow
+## 6. Appeals Workflow
 
 * **Who can submit an appeal?** Any creator who submitted text and received a classification can appeal using the unique `content_id` returned from their submission.
 * **Information provided**:
@@ -103,7 +217,7 @@ Verbatim text for the three label variants:
 
 ---
 
-## 6. Anticipated Edge Cases
+## 7. Anticipated Edge Cases
 
 1. **Short, Formulaic Forms (e.g., Recipe Steps or Technical Logs)**:
    * *Problem*: Heuristics and LLMs may both identify highly structured, simple, repetitious language as AI-generated because it lacks stylistic flair.
@@ -114,7 +228,7 @@ Verbatim text for the three label variants:
 
 ---
 
-## 7. AI Tool Plan
+## 8. AI Tool Plan
 
 ### M3: Submission Endpoint & First Signal
 * **Spec Section provided**: Architecture Diagram/Narrative + Detection Signals (Groq signal details).
@@ -130,3 +244,4 @@ Verbatim text for the three label variants:
 * **Spec Section provided**: Transparency Label Design + Appeals Workflow + Rate Limiting.
 * **Code request**: Build transparency label selection based on thresholds, write the `POST /appeal` endpoint updating record status, integrate `Flask-Limiter` with configured rate limits, and finalize the structured SQLite/JSON audit log backend.
 * **Verification**: Verify rate limiting triggers 429 after 10 requests, and test that calling `/appeal` updates status to `"under review"` in `/log`.
+
