@@ -158,15 +158,26 @@ To ensure production safety and user trust, we trace a scenario where a human wr
   * **Blind spots**: May misclassify highly structured, formal human academic writing, or extremely simple, short texts where semantic patterns are sparse.
 
 * **Signal 2: Stylometric Heuristics**
-  * **What it measures**: Structural properties of the text (e.g., sentence length variance, type-token ratio for vocabulary diversity, punctuation density).
-  * **Output format**: A score between `0.0` (high variability, typical of humans) and `1.0` (highly uniform/uniform complexity, typical of AI).
-  * **Rationale**: Pure Python implementation checking sentence complexity and structural variety. Genuinely independent from the semantic analysis of Signal 1.
-  * **Blind spots**: May misclassify human poetry or listing-heavy documents that have unnatural structures, or AI text that has been deliberately randomized/edited for structural noise.
+  * **What it measures**: Structural properties of the text including sentence length variance and Type-Token Ratio (TTR) for vocabulary diversity.
+  * **Output format**: A score between `0.0` (high structural variability, typical of humans) and `1.0` (highly uniform structure/lexicon, typical of AI).
+  * **Heuristic Scoring Formulas**:
+    1. **Sentence Length Variance Score ($S_{\text{var}}$)**:
+       - Let $\sigma^2$ be the variance of sentence lengths (in word counts).
+       - We compute $S_{\text{var}} = e^{-\sigma^2 / 50.0}$.
+       - *Rationale*: If variance is $0$ (all sentences have identical word count), $S_{\text{var}} = 1.0$. If variance is high (e.g., $100+$), $S_{\text{var}} < 0.13$, reflecting human-like variation.
+    2. **Type-Token Ratio Score ($S_{\text{ttr}}$)**:
+       - Let $TTR = \frac{\text{unique words}}{\text{total words}}$ (restricted to the first 200 words to prevent length bias).
+       - We compute $S_{\text{ttr}} = \max(0.0, 1.0 - \frac{TTR}{0.65})$.
+       - *Rationale*: A rich vocabulary (high $TTR \ge 0.65$) maps to $0.0$. Repetitive, simple vocabulary (low $TTR$) pushes the score toward $1.0$.
+    3. **Composite Stylometric Score ($S_{\text{sty}}$)**:
+       - $S_{\text{sty}} = 0.6 \cdot S_{\text{var}} + 0.4 \cdot S_{\text{ttr}}$.
+  * **Rationale**: Pure Python implementation checking structural complexity and lexical density, entirely independent of semantic LLM assessments.
+  * **Blind spots**: May misclassify human poetry or list-heavy formats as AI, or highly polished/edited AI writing as human.
 
 * **Signal Combination Approach**:
   * The combined confidence score $C \in [0, 1]$ will be computed using a weighted average:
     $$C = w_1 \cdot S_{\text{LLM}} + w_2 \cdot S_{\text{sty}}$$
-    where $w_1 = 0.7$ and $w_2 = 0.3$, prioritizing the semantic accuracy of the LLM while using stylometrics as a correcting factor.
+    where $w_1 = 0.7$ and $w_2 = 0.3$, prioritizing the semantic accuracy of the LLM while using stylometrics as a corrective factor.
 
 ---
 
