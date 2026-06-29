@@ -66,7 +66,65 @@ def detect_signal_llm(text: str) -> dict:
 
 def detect_signal_stylometrics(text: str) -> float:
     """
-    Placeholder for stylometric complexity analysis. 
-    Will be fully implemented in Milestone 4.
+    Computes a composite stylometric score [0.0 - 1.0] using two structural metrics:
+      1. Sentence Length Variance Score (S_var = e^(-var / 50.0))
+      2. Type-Token Ratio Score (S_ttr = max(0.0, 1.0 - TTR / 0.65))
+      
+    Returns the composite score S_sty = 0.6 * S_var + 0.4 * S_ttr.
     """
-    return 0.5
+    import re
+    import math
+    
+    if not text or not text.strip():
+        return 0.5
+
+    # 1. Sentence Length Variance
+    # Split text into sentences using basic sentence boundary punctuation (. ! ?)
+    sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+    
+    sentence_lengths = []
+    for s in sentences:
+        words = s.split()
+        if words:
+            sentence_lengths.append(len(words))
+            
+    if not sentence_lengths:
+        s_var = 0.5
+    else:
+        n = len(sentence_lengths)
+        mean_len = sum(sentence_lengths) / n
+        if n > 1:
+            variance = sum((x - mean_len) ** 2 for x in sentence_lengths) / n
+        else:
+            variance = 0.0
+            
+        s_var = math.exp(-variance / 50.0)
+
+    # 2. Type-Token Ratio (TTR)
+    # Clean text to remove punctuation and convert to lowercase
+    cleaned_text = re.sub(r'[^\w\s]', '', text.lower())
+    words = cleaned_text.split()
+    
+    # Restrict to first 200 words to avoid text length bias
+    words_subset = words[:200]
+    total_tokens = len(words_subset)
+    
+    if total_tokens == 0:
+        s_ttr = 0.5
+    else:
+        unique_tokens = len(set(words_subset))
+        ttr = unique_tokens / total_tokens
+        s_ttr = max(0.0, 1.0 - (ttr / 0.65))
+
+    # 3. Composite score
+    s_sty = 0.6 * s_var + 0.4 * s_ttr
+    # Clamp to ensure it falls strictly in [0.0, 1.0]
+    return max(0.0, min(1.0, s_sty))
+
+def calculate_confidence(llm_score: float, sty_score: float) -> float:
+    """
+    Combines LLM score and Stylometric score using a weighted average.
+      C = 0.7 * S_llm + 0.3 * S_sty
+    """
+    return 0.7 * llm_score + 0.3 * sty_score
+
