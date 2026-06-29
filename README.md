@@ -88,18 +88,25 @@ Below are the exact verbatim text variants surfaced to users:
 ---
 
 ## Detection Signals
-1. **LLM-based classification (Groq)**: Analyzes semantic patterns, clichés, coherence, and predictability. LLMs produce highly predictable next-token sequences that are easily caught by LLM-based classifiers.
-2. **Stylometric heuristics**: Computes sentence length variance and type-token ratio (TTR). Human writers show high variability in sentence structure and richer vocabulary diversity compared to uniform AI generation.
-
-### Real-World Deployment Enhancements (Signals)
-If we were deploying this system in a production environment, we would make the following enhancements:
-* **Local/Self-Hosted Classification Model**: Replace Groq API calls with a local, fine-tuned lightweight classification model (such as a RoBERTa-based detector) running on a self-hosted GPU cluster. This would reduce API latency from ~1-2 seconds down to milliseconds and eliminate external third-party API costs.
-* **Lexical Entropy & Perplexity Heuristics**: Incorporate token-level entropy and perplexity metrics into the stylometric pipeline to capture word-transition predictability. This would make stylometrics more resilient to paraphrasing tools.
+1. **LLM-based classification (Groq)**:
+   * **What it measures**: Semantic coherence, stylistic patterns, predictability, clichés, and flow characteristic of generative LLMs.
+   * **What it misses (blind spots)**: May misclassify highly structured, formal human academic writing, or extremely simple, short texts where semantic patterns are sparse.
+2. **Stylometric heuristics**:
+   * **What it measures**: Structural properties of the text, specifically sentence length variance (checking for uniformity) and Type-Token Ratio (TTR) for vocabulary diversity (capped at the first 200 words).
+   * **What it misses (blind spots)**: May misclassify human poetry or list-heavy formats (such as recipes or logs) as AI due to low sentence length variance and repetitive vocabulary, or highly polished/edited AI writing as human.
 
 ---
 
 ## Confidence Scoring & Calibration
-Confidence scores range from `0.0` (highly likely human) to `1.0` (highly likely AI). We enforce an asymmetric threshold ($0.70$) for an "AI-Generated" verdict to minimize false positives, which are highly detrimental to creators.
+Confidence scores range from `0.0` (highly likely human) to `1.0` (highly likely AI).
+
+### Score Combination Formula
+The ensemble confidence score $C$ is computed using a weighted average:
+$$C = 0.7 \cdot S_{\text{LLM}} + 0.3 \cdot S_{\text{sty}}$$
+where $S_{\text{LLM}}$ is the LLM-based classification score, and $S_{\text{sty}}$ is the composite stylometric heuristic score ($S_{\text{sty}} = 0.6 \cdot S_{\text{var}} + 0.4 \cdot S_{\text{ttr}}$). This prioritizes the semantic accuracy of the LLM while using structural stylometrics as a corrective factor.
+
+We enforce an asymmetric threshold ($0.70$) for an "AI-Generated" verdict to minimize false positives, which are highly detrimental to creators.
+
 
 ### Real-World Deployment Enhancements (Scoring)
 * **Dynamic Weight Calibration**: Implement a machine learning classifier (e.g., Logistic Regression) to dynamically calculate optimal weights for signals based on validation data, rather than hardcoding static weights ($0.70$ and $0.30$).
