@@ -39,6 +39,26 @@ Provenance Guard is a backend system designed for creative sharing platforms to 
    flask run --port 5000
    ```
 
+### Testing the Endpoints (Single-Line curl)
+
+Keep the server running in one terminal, then open a second terminal and copy-paste these commands:
+
+* **Attribution Analysis (`POST /submit`)**:
+  ```bash
+  curl -s -X POST http://localhost:5000/submit -H "Content-Type:application/json" -d '{"text": "Artificial intelligence represents a transformative paradigm shift in modern society.", "creator_id": "test-user-1"}'
+  ```
+
+* **File an Appeal (`POST /appeal`)**:
+  *(Replace `PASTE_CONTENT_ID_HERE` with the UUID returned from the submit call above)*
+  ```bash
+  curl -s -X POST http://localhost:5000/appeal -H "Content-Type:application/json" -d '{"content_id": "PASTE_CONTENT_ID_HERE", "creator_reasoning": "I drafted this manually."}'
+  ```
+
+* **Retrieve Audit Logs (`GET /log`)**:
+  ```bash
+  curl -s http://localhost:5000/log
+  ```
+
 ---
 
 ## System Architecture Overview

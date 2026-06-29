@@ -19,10 +19,23 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({
+        "message": "Welcome to the Provenance Guard API!",
+        "endpoints": {
+            "POST /submit": "Submit text for attribution analysis",
+            "POST /appeal": "File an appeal for a classification",
+            "GET /log": "Retrieve audit logs"
+        }
+    })
+
 @app.route("/submit", methods=["POST"])
 @limiter.limit("10 per minute;100 per day")
 def submit():
+    print("DEBUG: Raw request data received:", request.data)
     data = request.get_json(silent=True)
+    print("DEBUG: Parsed JSON data:", data)
     if not data or "text" not in data or "creator_id" not in data:
         return jsonify({"error": "Missing required fields: 'text' and 'creator_id' must be provided."}), 400
     
